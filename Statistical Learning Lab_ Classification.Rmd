@@ -1,0 +1,143 @@
+---
+title: "Statistical Learning: Classification"
+output: html_notebook
+---
+
+# Logistic Regression
+
+### Prepping the Data
+
+"Smarket" is a dataset of percentage returns for the S&P 500 stock index over 1250 days from 2001 to 2005. "Lag1" to "Lag5" represents the percentage of returns over the course of the past 5 days. Today represents the percent return of the given day. Kind of weird the data is structured this way. It would see more appropriate to make it a time series set.
+
+```{r}
+library(tidyverse)
+library(ISLR2)
+library(corrplot)
+library(MASS)
+
+
+Smarket_corr = Smarket %>% select(-Direction)
+```
+
+Removing the 9th column as it is qualitative.
+
+Let's make a correlation plot.
+
+```{r}
+corrplot(cor(Smarket_corr))
+```
+
+Pretty low covariance between the lags, which is a good sign.
+
+```{r}
+attach(Smarket)
+contrasts(Direction) #In this instance, Up = 1 and Down = 0
+```
+
+### The model
+
+```{r}
+logit_model = glm(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume,
+                  data = Smarket, family = binomial)
+
+summary(logit_model)
+
+```
+
+Most significant of these coefficients is the coefficient for lag1. This indicates that an increase of the prior days percantage return, it suggest that the stock will go down in percentage return.
+
+We can use the predict() function to give us a list of fitted values
+
+```{r}
+logit_probabilities = as.tibble(predict(logit_model , type = "response"))
+Smarket = cbind(Smarket,logit_probabilities)
+```
+
+To make predictions, we are using a threshold of .5. If the fitted value is greater than .5, than we assign the prediction direction as "Up" and vice-versa.
+
+```{r}
+logit_prediction = rep("Down",1250)
+logit_prediction[logit_probabilities > .5] = "Up"
+```
+
+```{r}
+Smarket = cbind(Smarket,logit_prediction)
+Smarket = Smarket %>% rename(Prediction_Perc = value,
+                             Prediction = logit_prediction)
+```
+
+Here is the confusion Matrix
+
+```{r}
+table(Smarket$Direction,Smarket$Prediction)
+(507+145)/1250
+```
+
+We have a 52% accurate prediction rate given our threshold of .5. But this is the error rate based on the training dataset. Let's see how the model works against a tested set by subsetting away the 2005 set.
+
+```{r}
+train = (Year < 2005)
+Smarket_2005 = Smarket[!train,]
+
+Direction_2005 = Direction[!train]
+
+logit_model_02 = glm(Direction ~ Lag1+Lag2+Lag3+Lag4+Lag5+Volume,
+                     data = Smarket,family = binomial,subset = train)
+
+summary(logit_model_02)
+
+logit_probabilities_training = predict(logit_model_02,Smarket_2005,type = "response")
+
+logit_prediction_training = rep("Down",252)
+logit_prediction_training[logit_probabilities_training > .5] = "Up"
+
+table(logit_prediction_training,Direction_2005)
+```
+
+Pretty bad test error rate of 52% Might as well guess at this point. As we have seen, our p-values for the lags are pretty small. Let's choose just the Lag1 and Lag2 as our x variables for our third logit model.
+
+```{r}
+logit_model_03 = glm(Direction ~ Lag1 + Lag2,
+                     data = Smarket,family = binomial,subset = train)
+
+logit_probabilities_training_02 = predict(logit_model_03,Smarket_2005,type = "response")
+logit_prediction_training_02 = rep("Down",252) #Might as well comment out this line
+logit_prediction_training_02[logit_probabilities_training_02 > .5] = "Up"
+
+table(logit_prediction_training_02,Direction_2005)
+```
+
+56% correct predictions. A little better. As for the marginal probability of the model guessing for "Up", the accuracy rate is 58%. A little better but still meh.
+
+To see the predicted returns given a select value of lag1 or lag2, we can do this.
+
+```{r}
+predict(logit_model_03,newdata = data.frame(Lag1 = c(1.2,1.5),Lag2 = c(1.1,-0.8)),
+                                                          type = "response")
+```
+
+Pretty cool!
+
+# Linear Discriminant Analysis
+
+Now let's use the LDA model on the Smarket data.
+
+```{r}
+lda_model_01 = lda(Direction ~ Lag1 + Lag2,data = Smarket,
+                   subset = train)
+lda_model_01
+
+mean(Smarket$Lag1)
+```
+
+"Prior Probabilities of Groups" refer to the prior probabilities of "Up" and "Down", which is just given as the fraction of "Up" and "Down" to the total. (${\hat{\pi}_{up}}=.492$ and ${\hat{\pi}_{down}}=.508$.)
+
+Then we have the "Group Means", which are the average of the predictor within each class. For example, the lag1 average when the response variable is "Down" is around $.0427$.
+
+"Coefficients of linear discriminants" refer to the linear combination of "lag1" and "lag2". The coefficients are the multipliers of the elements within $X=x$. In this case, if $-0.642lag1 \space - 0.514lag2$ is large, then the LDA would predict a market increase ("Up"). If small, the LDA would predict a market decrease ("Down").
+
+The plotting our model into the plot() function produces plots of the linear discriminants made by calculating $-0.642lag1 \space - 0.514lag2$ for our training observations.
+
+```{r}
+plot(lda_model_01)
+```
